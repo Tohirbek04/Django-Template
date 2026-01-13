@@ -24,23 +24,16 @@ jobs:
       - name: Create .env file
         run: |
           touch .env
-          echo "DATABASE_ENGINE=${{ secrets.DATABASE_ENGINE }}" >> .env
-          echo "DATABASE_HOST=${{ secrets.DATABASE_HOST }}" >> .env
           echo "DATABASE_USER=${{ secrets.DATABASE_USER }}" >> .env
           echo "DATABASE_PASSWORD=${{ secrets.DATABASE_PASSWORD }}" >> .env
           echo "DATABASE_NAME=${{ secrets.DATABASE_NAME }}" >> .env
-          echo "DATABASE_PORT=${{ secrets.DATABASE_PORT }}" >> .env
-          echo "DATABASE_TYPE=${{ secrets.DATABASE_TYPE }}" >> .env
           echo "DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}" >> .env
-          echo "DJANGO_DEBUG=${{ secrets.DJANGO_DEBUG }}" >> .env
           echo "CELERY_BROKER_URL=${{ secrets.CELERY_BROKER_URL }}" >> .env
           echo "CACHE_BACKEND_URL=${{ secrets.CACHE_BACKEND_URL }}" >> .env
-          echo "REDIS_PORT=${{ secrets.REDIS_PORT }}" >> .env
-          echo "REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}" >> .env
           echo "DOMAIN=${{ secrets.DOMAIN }}" >> .env
-          echo "FRONTEND_DOMAIN=${{ secrets.FRONTEND_DOMAIN }}" >> .env
           echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> .env
           echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
+          echo "LETSENCRYPT_EMAIL=${{ secrets.LETSENCRYPT_EMAIL }}" >> .env
 
       - name: Install dependencies
         run: |
@@ -62,23 +55,17 @@ jobs:
       - name: Create .env file
         run: |
           touch .env
-          echo "DATABASE_ENGINE=${{ secrets.DATABASE_ENGINE }}" >> .env
-          echo "DATABASE_HOST=${{ secrets.DATABASE_HOST }}" >> .env
           echo "DATABASE_USER=${{ secrets.DATABASE_USER }}" >> .env
           echo "DATABASE_PASSWORD=${{ secrets.DATABASE_PASSWORD }}" >> .env
           echo "DATABASE_NAME=${{ secrets.DATABASE_NAME }}" >> .env
           echo "DATABASE_PORT=${{ secrets.DATABASE_PORT }}" >> .env
-          echo "DATABASE_TYPE=${{ secrets.DATABASE_TYPE }}" >> .env
           echo "DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}" >> .env
-          echo "DJANGO_DEBUG=${{ secrets.DJANGO_DEBUG }}" >> .env
           echo "CELERY_BROKER_URL=${{ secrets.CELERY_BROKER_URL }}" >> .env
           echo "CACHE_BACKEND_URL=${{ secrets.CACHE_BACKEND_URL }}" >> .env
-          echo "REDIS_PORT=${{ secrets.REDIS_PORT }}" >> .env
-          echo "REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}" >> .env
           echo "DOMAIN=${{ secrets.DOMAIN }}" >> .env
-          echo "FRONTEND_DOMAIN=${{ secrets.FRONTEND_DOMAIN }}" >> .env
           echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> .env
           echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
+          echo "LETSENCRYPT_EMAIL=${{ secrets.LETSENCRYPT_EMAIL }}" >> .env
 
       - name: Current files in the directory
         run: ls -la

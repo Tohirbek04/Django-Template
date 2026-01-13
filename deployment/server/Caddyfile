@@ -1,0 +1,46 @@
+"${DOMAIN}" {
+    # Automatic TLS, use provided email for ACME notifications
+    tls "${LETSENCRYPT_EMAIL}"
+
+    # Compression
+    encode gzip zstd
+
+    # Serve static files with long cache headers
+    @static path /static/*
+    handle @static {
+        root * /srv/static
+        file_server
+        header Cache-Control "public, max-age=2592000"
+    }
+
+    # Serve media files with long cache headers
+    @media path /media/*
+    handle @media {
+        root * /srv/media
+        file_server
+        header Cache-Control "public, max-age=2592000"
+    }
+
+    # Reverse-proxy everything else to Django web service
+    reverse_proxy /* web:8000 {
+        lb_policy round_robin
+        transport http {
+            read_buffer 4096
+        }
+    }
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer-when-downgrade"
+    }
+
+    # Access log
+    log {
+        output file /var/log/caddy/access.log
+        format single_field common_log
+    }
+}
+

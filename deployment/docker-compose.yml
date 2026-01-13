@@ -20,7 +20,7 @@ services:
       resources:
         limits:
           cpus: '1.0'
-          memory: 2G
+          memory: '2G'
 
   # PgBouncer for Database Connection Pooling
   pgbouncer:
@@ -68,7 +68,7 @@ services:
       resources:
         limits:
           cpus: '0.5'
-          memory: 512M
+          memory: '512M'
 
   # Redis Exporter for Prometheus
   redis-exporter:
@@ -84,16 +84,16 @@ services:
       redis:
         condition: service_healthy
 
-  # Django Web Application Service
+  # Django Web Application Service (updated: remove Traefik labels, add healthcheck/expose and tuned command)
   web:
-    image: ganiyevuz/image-backend:latest
+    image: ${DOCKER_USERNAME}/template-backend:latest
     restart: unless-stopped
     command: >
       /bin/bash -c "
       ./wait_for_db.sh pgbouncer 6432 &&
       python manage.py collectstatic --noinput &&
       python manage.py migrate &&
-      gunicorn conf.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 4
+      gunicorn conf.wsgi:application --bind 0.0.0.0:8000 --workers 6 --threads 4 --worker-tmp-dir /dev/shm --log-level info
       "
     volumes:
       - static_volume:/app/static
@@ -117,109 +117,48 @@ services:
     networks:
       - backend-network
       - monitoring
-    labels:
-      traefik.enable: "true"
-      traefik.http.routers.web.rule: "Host(`${DOMAIN}`)"
-      traefik.http.routers.web.entrypoints: "websecure"
-      traefik.http.routers.web.tls.certresolver: "le"
-      traefik.http.services.web.loadbalancer.server.port: "8000"
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8000/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     deploy:
-      replicas: 3
+      replicas: 4
       resources:
         limits:
-          cpus: '1.0'
-          memory: 1G
+          cpus: '1.5'
+          memory: '2G'
       restart_policy:
         condition: on-failure
 
-#  # Frontend Application Service
-#  frontend:
-#    image: ganiyevuz/image-frontend:latest
-#    restart: unless-stopped
-#    networks:
-#      - frontend-network
-#    depends_on:
-#      web:
-#        condition: service_started
-#    labels:
-#      traefik.enable: "true"
-#      traefik.http.routers.frontend.rule: "Host(`${FRONTEND_DOMAIN}`)"
-#      traefik.http.routers.frontend.entrypoints: "websecure"
-#      traefik.http.routers.frontend.tls.certresolver: "le"
-#      traefik.http.services.frontend.loadbalancer.server.port: "80"
-#    deploy:
-#      resources:
-#        limits:
-#          cpus: '0.5'
-#          memory: 512M
-
-  # Nginx for Serving Static and Media Files
-  nginx:
-    image: nginx:stable-alpine
+  # Caddy reverse proxy (replaces Traefik + Nginx)
+  caddy:
+    image: caddy:2-alpine
     restart: unless-stopped
-    volumes:
-      - static_volume:/usr/share/nginx/html/static:ro
-      - media_volume:/usr/share/nginx/html/media:ro
-      - ./nginx_logs:/var/log/nginx
-      - ./server/nginx.conf:/etc/nginx/conf.d/default.conf
-    networks:
-      - frontend-network
-    depends_on:
-      web:
-        condition: service_started
-    labels:
-      traefik.enable: "true"
-      traefik.http.routers.staticfiles.rule: "Host(`${DOMAIN}`) && (PathPrefix(`/static`) || PathPrefix(`/media`))"
-      traefik.http.routers.staticfiles.entrypoints: "websecure"
-      traefik.http.routers.staticfiles.tls.certresolver: "le"
-      traefik.http.services.staticfiles.loadbalancer.server.port: "80"
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-
-  # Traefik Reverse Proxy and Load Balancer
-  traefik:
-    image: traefik:v2.10
-    restart: unless-stopped
-    command:
-      - "--api.dashboard=true"
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.websecure.address=:443"
-      - "--certificatesresolvers.le.acme.httpchallenge=true"
-      - "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web"
-      - "--certificatesresolvers.le.acme.email=${LETSENCRYPT_EMAIL}"
-      - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
-      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
-      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
-      - "--log.level=INFO"
-      - "--accesslog=true"
-      - "--metrics.prometheus=true"
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock:ro"
-      - "./letsencrypt:/letsencrypt"
+      - ./server/Caddyfile:/etc/caddy/Caddyfile:ro
+      - static_volume:/srv/static:ro
+      - media_volume:/srv/media:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - ./caddy_logs:/var/log/caddy
     networks:
       - frontend-network
-      - monitoring
+    depends_on:
+      web:
+        condition: service_healthy
     deploy:
       resources:
         limits:
           cpus: '0.5'
-          memory: 512M
-    labels:
-      traefik.enable: "true"
-      traefik.http.routers.traefik-dashboard.rule: "Host(`dashboard.${DOMAIN}`)"
-      traefik.http.routers.traefik-dashboard.entrypoints: "websecure"
-      traefik.http.routers.traefik-dashboard.tls.certresolver: "le"
-      traefik.http.services.traefik-dashboard.loadbalancer.server.port: "8080"
+          memory: '512M'
 
-  # Database Backup Service
+  # Database Backup Service (unchanged)
   db_backup:
     image: prodrigestivill/postgres-backup-local
     restart: unless-stopped
@@ -249,9 +188,9 @@ services:
       resources:
         limits:
           cpus: '0.5'
-          memory: 256M
+          memory: '256M'
 
-  # Prometheus Monitoring Service
+  # Prometheus Monitoring Service (unchanged)
   prometheus:
     image: prom/prometheus:latest
     restart: unless-stopped
@@ -265,14 +204,13 @@ services:
       - web
       - postgres-exporter
       - redis-exporter
-      - traefik
     deploy:
       resources:
         limits:
           cpus: '1.0'
-          memory: 1G
+          memory: '1G'
 
-  # Grafana Visualization Service
+  # Grafana Visualization Service (unchanged)
   grafana:
     image: grafana/grafana:latest
     restart: unless-stopped
@@ -288,7 +226,7 @@ services:
       resources:
         limits:
           cpus: '0.5'
-          memory: 512M
+          memory: '512M'
 
 volumes:
   postgres_data:
@@ -296,6 +234,8 @@ volumes:
   static_volume:
   media_volume:
   grafana_data:
+  caddy_data:
+  caddy_config:
 
 networks:
   frontend-network:
