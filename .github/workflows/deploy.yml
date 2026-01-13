@@ -1,115 +1,153 @@
-name: Deploy Django Application
+name: CI/CD Pipeline
 
 on:
   push:
-    branches:
-      - caddy
+    branches: [master, caddy]
   pull_request:
-    branches:
-      - caddy
+    branches: [master, caddy]
+
+env:
+  PYTHON_VERSION: "3.13"
+  UV_VERSION: "0.5"
+  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/template-backend
 
 jobs:
+
   build:
+    name: Build & Push Docker Image
     runs-on: ubuntu-latest
+    if: github.event_name == 'push'
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
-
-      - name: Set up Python
-        uses: actions/setup-python@v2
-        with:
-          python-version: '3.11'
-
-      - name: Create .env file
-        run: |
-          touch .env
-          echo "DATABASE_USER=${{ secrets.DATABASE_USER }}" >> .env
-          echo "DATABASE_PASSWORD=${{ secrets.DATABASE_PASSWORD }}" >> .env
-          echo "DATABASE_NAME=${{ secrets.DATABASE_NAME }}" >> .env
-          echo "DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}" >> .env
-          echo "CELERY_BROKER_URL=${{ secrets.CELERY_BROKER_URL }}" >> .env
-          echo "CACHE_BACKEND_URL=${{ secrets.CACHE_BACKEND_URL }}" >> .env
-          echo "DOMAIN=${{ secrets.DOMAIN }}" >> .env
-          echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> .env
-          echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
-          echo "LETSENCRYPT_EMAIL=${{ secrets.LETSENCRYPT_EMAIL }}" >> .env
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Check Django project
-        run: |
-          python3 manage.py check
-
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-
-      - name: Create .env file
-        run: |
-          touch .env
-          echo "DATABASE_USER=${{ secrets.DATABASE_USER }}" >> .env
-          echo "DATABASE_PASSWORD=${{ secrets.DATABASE_PASSWORD }}" >> .env
-          echo "DATABASE_NAME=${{ secrets.DATABASE_NAME }}" >> .env
-          echo "DATABASE_PORT=${{ secrets.DATABASE_PORT }}" >> .env
-          echo "DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}" >> .env
-          echo "CELERY_BROKER_URL=${{ secrets.CELERY_BROKER_URL }}" >> .env
-          echo "CACHE_BACKEND_URL=${{ secrets.CACHE_BACKEND_URL }}" >> .env
-          echo "DOMAIN=${{ secrets.DOMAIN }}" >> .env
-          echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> .env
-          echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
-          echo "LETSENCRYPT_EMAIL=${{ secrets.LETSENCRYPT_EMAIL }}" >> .env
-
-      - name: Current files in the directory
-        run: ls -la
+        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v4
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
         with:
           context: .
-          tags: ${{ secrets.DOCKER_USERNAME }}/image-backend:latest
+          file: ./deployment/Dockerfile
           push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
 
-      - name: Setup SSH for Deployment
-        uses: webfactory/ssh-agent@v0.5.3
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/caddy'
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create production .env file
+        run: |
+          cat > .env << EOF
+          DATABASE_USER=${{ secrets.DATABASE_USER }}
+          DATABASE_PASSWORD=${{ secrets.DATABASE_PASSWORD }}
+          DATABASE_NAME=${{ secrets.DATABASE_NAME }}
+          DATABASE_PORT=6432
+          DATABASE_HOST=pgbouncer
+          DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
+          DJANGO_DEBUG=False
+          REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+          CELERY_BROKER_URL=redis://:${{ secrets.REDIS_PASSWORD }}@redis:6379/0
+          CACHE_BACKEND_URL=redis://:${{ secrets.REDIS_PASSWORD }}@redis:6379/1
+          DOMAIN=${{ secrets.DOMAIN }}
+          LETSENCRYPT_EMAIL=${{ secrets.LETSENCRYPT_EMAIL }}
+          DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }}
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
+          EOF
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Create directory on server if not exists
+      - name: Add host to known_hosts
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "mkdir -p /var/www/dev/server/"
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
 
-
-      - name: Upload .env, docker-compose.traefik.yml to server
+      - name: Create deployment directory
         run: |
-          scp -o StrictHostKeyChecking=no .env docker-compose.traefik.yml ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/dev/
-          scp -o StrictHostKeyChecking=no ./server/nginx.conf ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/dev/server/
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "mkdir -p /var/www/app/deployment/server"
 
-      - name: Deploy using Docker Compose
+      - name: Upload deployment files
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
-          cd /var/www/dev
-          docker-compose -f docker-compose.traefik.yml pull
-          docker-compose -f docker-compose.traefik.yml down
-          docker-compose -f docker-compose.traefik.yml up -d
-          EOF
+          scp .env ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/app/
+          scp deployment/docker-compose.yml ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/app/deployment/
+          scp deployment/server/Caddyfile ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/app/deployment/server/
+          scp deployment/send_backup.sh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/app/deployment/
+          scp -r prometheus ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/app/
 
+      - name: Deploy with Docker Compose
+        run: |
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'DEPLOY'
+          cd /var/www/app/deployment
 
-# docker-compose -f docker-compose.traefik.yml up -d --remove-orphans flag removes any containers not defined in the current Compose file, which helps keep your setup clean.
+          # Pull latest images
+          docker compose pull
+
+          # Stop existing containers gracefully
+          docker compose down --remove-orphans
+
+          # Start new containers
+          docker compose up -d
+
+          # Wait for health checks
+          sleep 30
+
+          # Verify deployment
+          docker compose ps
+
+          # Clean up old images
+          docker image prune -f
+          DEPLOY
+
+      - name: Verify deployment
+        run: |
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'VERIFY'
+          cd /var/www/app/deployment
+
+          # Check if all services are running
+          if docker compose ps | grep -q "unhealthy\|Exit"; then
+            echo "Deployment verification failed!"
+            docker compose logs --tail=50
+            exit 1
+          fi
+
+          echo "Deployment successful!"
+          VERIFY
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d text="Deployment failed for ${{ github.repository }} on branch ${{ github.ref_name }}"

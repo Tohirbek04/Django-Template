@@ -12,34 +12,40 @@ services:
     networks:
       - backend-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER} -d ${DATABASE_NAME}"]
       interval: 10s
       timeout: 5s
       retries: 5
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: '2G'
+          cpus: "1.0"
+          memory: 2G
 
   # PgBouncer for Database Connection Pooling
   pgbouncer:
-    image: edoburu/pgbouncer:1.18.0
+    image: edoburu/pgbouncer:1.23.0
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@db:5432/${DATABASE_NAME}
       PGBOUNCER_LISTEN_PORT: 6432
       PGBOUNCER_MAX_CLIENT_CONN: 1000
       PGBOUNCER_DEFAULT_POOL_SIZE: 20
+      PGBOUNCER_POOL_MODE: transaction
     networks:
       - backend-network
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # PostgreSQL Exporter for Prometheus
   postgres-exporter:
-    image: prometheuscommunity/postgres-exporter
+    image: prometheuscommunity/postgres-exporter:latest
     restart: unless-stopped
     environment:
       DATA_SOURCE_NAME: "postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@db:5432/${DATABASE_NAME}?sslmode=disable"
@@ -54,7 +60,16 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${REDIS_PASSWORD}
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
     volumes:
       - redis_data:/data
     networks:
@@ -67,12 +82,12 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: '512M'
+          cpus: "0.5"
+          memory: 512M
 
   # Redis Exporter for Prometheus
   redis-exporter:
-    image: oliver006/redis_exporter
+    image: oliver006/redis_exporter:latest
     restart: unless-stopped
     command:
       - "--redis.addr=redis:6379"
@@ -84,20 +99,14 @@ services:
       redis:
         condition: service_healthy
 
-  # Django Web Application Service (updated: remove Traefik labels, add healthcheck/expose and tuned command)
+  # Django Web Application Service
   web:
-    image: ${DOCKER_USERNAME}/template-backend:latest
+    image: ${DOCKER_IMAGE}
     restart: unless-stopped
-    command: >
-      /bin/bash -c "
-      ./wait_for_db.sh pgbouncer 6432 &&
-      python manage.py collectstatic --noinput &&
-      python manage.py migrate &&
-      gunicorn conf.wsgi:application --bind 0.0.0.0:8000 --workers 6 --threads 4 --worker-tmp-dir /dev/shm --log-level info
-      "
     volumes:
       - static_volume:/app/static
       - media_volume:/app/media
+      - logs_volume:/app/logs
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -114,53 +123,67 @@ services:
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       CACHE_BACKEND_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+      DOMAIN: ${DOMAIN}
     networks:
       - backend-network
       - monitoring
     expose:
       - "8000"
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8000/healthz || exit 1"]
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8000/healthz/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 40s
     deploy:
-      replicas: 4
+      replicas: 2
       resources:
         limits:
-          cpus: '1.5'
-          memory: '2G'
+          cpus: "1.0"
+          memory: 1G
       restart_policy:
         condition: on-failure
+        delay: 5s
+        max_attempts: 3
 
-  # Caddy reverse proxy (replaces Traefik + Nginx)
+  # Caddy Reverse Proxy
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL}
     volumes:
       - ./server/Caddyfile:/etc/caddy/Caddyfile:ro
       - static_volume:/srv/static:ro
       - media_volume:/srv/media:ro
       - caddy_data:/data
       - caddy_config:/config
-      - ./caddy_logs:/var/log/caddy
+      - caddy_logs:/var/log/caddy
     networks:
       - frontend-network
+      - backend-network
+      - monitoring
     depends_on:
       web:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:2019/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: '512M'
+          cpus: "0.5"
+          memory: 256M
 
-  # Database Backup Service (unchanged)
+  # Database Backup Service
   db_backup:
-    image: prodrigestivill/postgres-backup-local
+    image: prodrigestivill/postgres-backup-local:16
     restart: unless-stopped
     environment:
       POSTGRES_HOST: db
@@ -171,31 +194,37 @@ services:
       BACKUP_KEEP_DAYS: "7"
       BACKUP_KEEP_WEEKS: "4"
       BACKUP_KEEP_MONTHS: "3"
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
-      WEBHOOK_URL_START: "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage?chat_id=${TELEGRAM_CHAT_ID}&text=Backup%20Started"
-      WEBHOOK_URL_SUCCESS: "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage?chat_id=${TELEGRAM_CHAT_ID}&text=Backup%20Completed%20Successfully"
-      WEBHOOK_URL_ERROR: "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage?chat_id=${TELEGRAM_CHAT_ID}&text=Backup%20Failed"
+      HEALTHCHECK_PORT: 8080
     volumes:
-      - /var/opt/pgbackups:/backups:rw
-      - ./send_backup.sh:/send_backup.sh
+      - backup_data:/backups
     depends_on:
       db:
         condition: service_healthy
     networks:
       - backend-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: '256M'
+          cpus: "0.5"
+          memory: 256M
 
-  # Prometheus Monitoring Service (unchanged)
+  # Prometheus Monitoring Service
   prometheus:
     image: prom/prometheus:latest
     restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
     ports:
       - "9090:9090"
     networks:
@@ -207,13 +236,17 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: '1G'
+          cpus: "0.5"
+          memory: 512M
 
-  # Grafana Visualization Service (unchanged)
+  # Grafana Visualization Service
   grafana:
     image: grafana/grafana:latest
     restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: https://${DOMAIN}/grafana
     ports:
       - "3000:3000"
     volumes:
@@ -225,19 +258,26 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: '512M'
+          cpus: "0.5"
+          memory: 256M
 
 volumes:
   postgres_data:
   redis_data:
   static_volume:
   media_volume:
+  logs_volume:
   grafana_data:
   caddy_data:
   caddy_config:
+  caddy_logs:
+  backup_data:
+  prometheus_data:
 
 networks:
   frontend-network:
+    driver: bridge
   backend-network:
+    driver: bridge
   monitoring:
+    driver: bridge
