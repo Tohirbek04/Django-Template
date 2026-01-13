@@ -3,10 +3,10 @@ name: Deploy Django Application
 on:
   push:
     branches:
-      - dev
+      - caddy
   pull_request:
     branches:
-      - dev
+      - caddy
 
 jobs:
   build:
@@ -43,6 +43,7 @@ jobs:
       - name: Check Django project
         run: |
           python3 manage.py check
+
 
   deploy:
     runs-on: ubuntu-latest
