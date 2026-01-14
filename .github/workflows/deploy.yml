@@ -101,7 +101,7 @@ jobs:
 
       - name: Upload deployment files
         run: |
-          scp .env ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/app/
+          scp .env ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/app/deployment/
           scp deployment/docker-compose.yml ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/app/deployment/
           scp deployment/server/Caddyfile ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/app/deployment/server/
           scp deployment/send_backup.sh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/app/deployment/
