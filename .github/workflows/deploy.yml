@@ -9,7 +9,8 @@ on:
 env:
   PYTHON_VERSION: "3.13"
   UV_VERSION: "0.5"
-  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/template-backend
+  VERSION: "1.0.0"
+  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/template-backend:${{env.VERSION}}
 
 jobs:
 
@@ -80,7 +81,7 @@ jobs:
           DOMAIN=${{ secrets.DOMAIN }}
           LETSENCRYPT_EMAIL=${{ secrets.LETSENCRYPT_EMAIL }}
           DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }}
-          DOCKER_IMAGE=${{ secrets.DOCKER_USERNAME }}/template-backend
+          DOCKER_IMAGE=${{ secrets.DOCKER_USERNAME }}/template-backend:${{env.VERSION}}
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
           EOF

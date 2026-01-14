@@ -99,8 +99,8 @@ services:
       redis:
         condition: service_healthy
 
-  # Django Web Application Service
-  web:
+  # Django Backend Application Service
+  backend:
     image: ${DOCKER_IMAGE}
     restart: unless-stopped
     volumes:
@@ -168,7 +168,7 @@ services:
       - backend-network
       - monitoring
     depends_on:
-      web:
+      backend:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:2019/metrics"]
@@ -221,7 +221,7 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=15d"
-      - "--web.enable-lifecycle"
+      - "--backend.enable-lifecycle"
     volumes:
       - ../prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -230,7 +230,7 @@ services:
     networks:
       - monitoring
     depends_on:
-      - web
+      - backend
       - postgres-exporter
       - redis-exporter
     deploy:
