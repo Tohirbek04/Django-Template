@@ -110,18 +110,24 @@ jobs:
       - name: Deploy with Docker Compose
         run: |
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'DEPLOY'
+          set -e  # Exit immediately if any command fails
+
           cd /var/www/app/deployment
 
-          # Pull latest images
-          docker compose pull
+          # Pull latest images (fails if any image is not found)
+          echo "Pulling images..."
+          docker compose pull || { echo "Image pull failed!"; exit 1; }
 
           # Stop existing containers gracefully
+          echo "Stopping existing containers..."
           docker compose down --remove-orphans
 
           # Start new containers
-          docker compose up -d
+          echo "Starting new containers..."
+          docker compose up -d || { echo "Failed to start containers!"; exit 1; }
 
           # Wait for health checks
+          echo "Waiting for services to be healthy..."
           sleep 30
 
           # Verify deployment
@@ -129,6 +135,8 @@ jobs:
 
           # Clean up old images
           docker image prune -f
+
+          echo "Deployment completed successfully!"
           DEPLOY
 
       - name: Verify deployment
