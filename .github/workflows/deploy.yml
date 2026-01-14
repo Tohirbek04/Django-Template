@@ -80,7 +80,7 @@ jobs:
           DOMAIN=${{ secrets.DOMAIN }}
           LETSENCRYPT_EMAIL=${{ secrets.LETSENCRYPT_EMAIL }}
           DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }}
-          DOCKER_IMAGE=${{ secrets.DOCKER_IMAGE }}
+          DOCKER_IMAGE=${{ secrets.DOCKER_USERNAME }}/template-backend
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
           EOF
