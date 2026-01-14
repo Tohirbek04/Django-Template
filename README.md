@@ -128,12 +128,15 @@ docker compose down
 
 | Service | Port | Description |
 |---------|------|-------------|
-| web | 8000 | Django application |
-| caddy | 80, 443 | Reverse proxy |
-| db | 5432 | PostgreSQL |
+| backend | 8001 | Django application (2 replicas) |
+| caddy | 80, 443 | Reverse proxy with auto HTTPS |
+| db | 5432 | PostgreSQL 16 |
 | pgbouncer | 6432 | Connection pooling |
 | redis | 6379 | Cache & broker |
-| prometheus | 9090 | Metrics |
+| postgres-exporter | - | PostgreSQL metrics exporter |
+| redis-exporter | - | Redis metrics exporter |
+| db_backup | - | Automated daily backups |
+| prometheus | 9091 | Metrics collection |
 | grafana | 3000 | Dashboards |
 
 ### Environment Variables
@@ -148,6 +151,7 @@ REDIS_PASSWORD=
 DOMAIN=
 LETSENCRYPT_EMAIL=
 DOCKER_USERNAME=
+DOCKER_PASSWORD=
 
 # Optional
 DJANGO_DEBUG=False
@@ -169,6 +173,7 @@ Django-Template/
 ├── deployment/             # Production deployment
 │   ├── Dockerfile          # Docker image
 │   ├── docker-compose.yml  # Container orchestration
+│   ├── send_backup.sh      # Backup notification script
 │   └── server/
 │       └── Caddyfile       # Caddy configuration
 ├── prometheus/             # Monitoring config
@@ -185,9 +190,9 @@ Django-Template/
 
 When `DEBUG=True`, API documentation is available at:
 
-- **Swagger UI**: `http://localhost:8000/`
-- **ReDoc**: `http://localhost:8000/api/schema/redoc/`
-- **OpenAPI Schema**: `http://localhost:8000/api/schema/`
+- **Swagger UI**: `http://localhost:8001/`
+- **ReDoc**: `http://localhost:8001/api/schema/redoc/`
+- **OpenAPI Schema**: `http://localhost:8001/api/schema/`
 
 ## Health Check
 
@@ -214,7 +219,7 @@ Response:
 
 Django metrics are exposed at `/metrics` endpoint.
 
-Prometheus is available at `http://localhost:9090`
+Prometheus is available at `http://localhost:9091`
 
 ### Grafana Dashboards
 
@@ -226,9 +231,8 @@ Default credentials: `admin` / `admin` (or `GRAFANA_PASSWORD`)
 
 GitHub Actions workflow includes:
 
-1. **Test** - Linting, type checking, Django checks, tests
-2. **Build** - Docker image build and push
-3. **Deploy** - SSH deployment to production server
+1. **Build** - Docker image build and push to Docker Hub
+2. **Deploy** - SSH deployment to production server with health verification
 
 Required GitHub Secrets:
 - `DOCKER_USERNAME`, `DOCKER_PASSWORD`

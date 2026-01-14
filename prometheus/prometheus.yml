@@ -27,7 +27,7 @@ scrape_configs:
   - job_name: "django"
     metrics_path: /metrics
     static_configs:
-      - targets: ["web:8000"]
+      - targets: ["backend:8001"]
 
   # Caddy metrics (admin API must be enabled)
   - job_name: "caddy"

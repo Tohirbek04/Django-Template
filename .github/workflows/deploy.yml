@@ -151,7 +151,7 @@ jobs:
             exit 1
           fi
 
-          echo "Deployment successful!"
+          echo "✅ Deployment successful!"
           VERIFY
 
       - name: Notify on failure

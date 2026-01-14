@@ -60,10 +60,10 @@ RUN mkdir -p /app/static /app/media /app/logs \
 # Switch to non-root user
 USER appuser
 
-EXPOSE 8000
+EXPOSE 8001
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/healthz/ || exit 1
 
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["uvicorn", "conf.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--log-level", "info"]
+CMD ["uvicorn", "conf.asgi:application", "--host", "0.0.0.0", "--port", "8001", "--workers", "4", "--log-level", "info"]

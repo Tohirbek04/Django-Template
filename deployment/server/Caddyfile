@@ -51,7 +51,7 @@
 
     # API and dynamic content
     handle @api {
-        reverse_proxy web:8000 {
+        reverse_proxy backend:8001 {
             lb_policy round_robin
             lb_retries 3
 
@@ -83,7 +83,7 @@
 
     # Default handler for other paths
     handle {
-        reverse_proxy web:8000 {
+        reverse_proxy backend:8001 {
             lb_policy round_robin
 
             transport http {

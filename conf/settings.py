@@ -23,8 +23,7 @@ ALLOWED_HOSTS = [
     DOMAIN,
     f"www.{DOMAIN}",
     "localhost",
-    "127.0.0.1",
-    "web",  # Docker service name
+    "127.0.0.1"
 ]
 
 # CSRF configuration
@@ -148,19 +147,19 @@ REST_FRAMEWORK = {
     ),
     "EXCEPTION_HANDLER": "drf_standardized_errors.handler.exception_handler",
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
-    "PAGE_SIZE": 20,
+    "PAGE_SIZE": 50,
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
     ],
-    "DEFAULT_THROTTLE_CLASSES": [
-        "rest_framework.throttling.AnonRateThrottle",
-        "rest_framework.throttling.UserRateThrottle",
-    ],
-    "DEFAULT_THROTTLE_RATES": {
-        "anon": "100/minute",
-        "user": "1000/minute",
-    },
+    # "DEFAULT_THROTTLE_CLASSES": [
+    #     "rest_framework.throttling.AnonRateThrottle",
+    #     "rest_framework.throttling.UserRateThrottle",
+    # ],
+    # "DEFAULT_THROTTLE_RATES": {
+    #     "anon": "100/minute",
+    #     "user": "1000/minute",
+    # },
 }
 
 # DRF Spectacular
@@ -296,7 +295,7 @@ if not DEBUG:
     CONN_MAX_AGE = 60
 
     # Restrict allowed hosts in production
-    ALLOWED_HOSTS = [DOMAIN, f"www.{DOMAIN}", "web"]
+    ALLOWED_HOSTS = [DOMAIN, f"www.{DOMAIN}", "backend"]
 
 # Development-only settings
 if DEBUG:

@@ -129,9 +129,9 @@ services:
       - backend-network
       - monitoring
     expose:
-      - "8000"
+      - "8001"
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8000/healthz/ || exit 1"]
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8001/healthz/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -222,7 +222,7 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=15d"
-      - "--backend.enable-lifecycle"
+      - "--web.enable-lifecycle"
     volumes:
       - ../prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -276,8 +276,6 @@ volumes:
   prometheus_data:
 
 networks:
-  frontend-network:
-    driver: bridge
   backend-network:
     driver: bridge
   monitoring:
