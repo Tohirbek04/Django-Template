@@ -10,7 +10,7 @@ env:
   PYTHON_VERSION: "3.13"
   UV_VERSION: "0.5"
   VERSION: "1.0.0"
-  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/template-backend:1.0.0
+  DOCKER_REPO: ${{ secrets.DOCKER_USERNAME }}/template-backend
 
 jobs:
 
@@ -36,10 +36,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.DOCKER_IMAGE }}
+          images: ${{ env.DOCKER_REPO }}
           tags: |
-            type=ref,event=branch
-            type=sha,prefix=
+            type=raw,value=${{ env.VERSION }}
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
@@ -81,7 +80,7 @@ jobs:
           DOMAIN=${{ secrets.DOMAIN }}
           LETSENCRYPT_EMAIL=${{ secrets.LETSENCRYPT_EMAIL }}
           DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }}
-          DOCKER_IMAGE=${{ secrets.DOCKER_USERNAME }}/template-backend:1.0.0
+          DOCKER_IMAGE=${{ env.DOCKER_REPO }}:${{ env.VERSION }}
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
           EOF
