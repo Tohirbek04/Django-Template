@@ -1,0 +1,143 @@
+# Global options
+{
+    # Enable admin API for Prometheus metrics
+    admin :2019
+
+    # Email for ACME
+    email {$LETSENCRYPT_EMAIL}
+
+    # Logging
+    log {
+        level INFO
+    }
+}
+
+# Main site configuration
+{$DOMAIN} {
+    # TLS configuration
+    tls {
+        protocols tls1.2 tls1.3
+    }
+
+    # Compression with priority order
+    encode zstd gzip
+
+    # Request matchers
+    @static path /static/*
+    @media path /media/*
+    @api path /api/* /admin/* /healthz/* /metrics
+
+    # Static files - aggressive caching
+    handle @static {
+        root * /srv
+        file_server {
+            precompressed gzip zstd
+        }
+        header {
+            Cache-Control "public, max-age=31536000, immutable"
+            -Server
+        }
+    }
+
+    # Media files - moderate caching
+    handle @media {
+        root * /srv
+        file_server
+        header {
+            Cache-Control "public, max-age=2592000"
+            -Server
+        }
+    }
+
+    # API and dynamic content
+    handle @api {
+        reverse_proxy backend:8001 {
+            lb_policy round_robin
+            lb_retries 3
+
+            # Health checking
+            health_uri /healthz/
+            health_interval 30s
+            health_timeout 10s
+
+            # Connection settings
+            transport http {
+                read_buffer 8192
+                write_buffer 8192
+                keepalive 30s
+                keepalive_idle_conns 10
+            }
+
+            # Headers
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+            header_up X-Request-ID {uuid}
+        }
+
+        header {
+            Cache-Control "no-store, no-cache, must-revalidate"
+            -Server
+        }
+    }
+
+    # Default handler for other paths
+    handle {
+        reverse_proxy backend:8001 {
+            lb_policy round_robin
+
+            transport http {
+                read_buffer 8192
+                write_buffer 8192
+            }
+
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    # Security headers (applied to all responses)
+    header {
+        # HSTS
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+
+        # Prevent MIME type sniffing
+        X-Content-Type-Options "nosniff"
+
+        # Clickjacking protection
+        X-Frame-Options "SAMEORIGIN"
+
+        # XSS protection
+        X-XSS-Protection "1; mode=block"
+
+        # Referrer policy
+        Referrer-Policy "strict-origin-when-cross-origin"
+
+        # Permissions policy
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+
+        # Content Security Policy (adjust as needed)
+        # Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';"
+
+        # Remove server identification
+        -Server
+    }
+
+    # Access logging
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 100mb
+            roll_keep 5
+            roll_keep_for 168h
+        }
+        format json {
+            time_format iso8601
+        }
+    }
+}
+
+# Redirect www to non-www
+www.{$DOMAIN} {
+    redir https://{$DOMAIN}{uri} permanent
+}

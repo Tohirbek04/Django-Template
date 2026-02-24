@@ -1,0 +1,110 @@
+[project]
+name = "django-template"
+version = "0.1.0"
+description = "Production-ready Django template with uv and Caddy"
+requires-python = ">=3.13"
+dependencies = [
+    # Django Core
+    "django>=5.1",
+
+    # Django REST Framework
+    "djangorestframework>=3.15",
+    "djangorestframework-simplejwt>=5.3",
+    "django-filter>=24.3",
+    "django-cors-headers>=4.4",
+    "drf-spectacular>=0.27",
+    "drf-standardized-errors>=0.14",
+
+    # Django Extensions
+    "django-jazzmin>=3.0",
+    "django-ckeditor-5>=0.2",
+    "django-import-export>=4.1",
+
+    # Database
+    "psycopg[binary]>=3.2",
+
+    # Cache & Message Broker
+    "django-redis>=5.4",
+    "redis>=5.0",
+
+    # Monitoring
+    "django-prometheus>=2.3",
+
+    # Server
+    "uvicorn[standard]>=0.30",
+
+    # Utilities
+    "pillow>=10.4",
+    "python-dotenv>=1.0",
+    "pyjwt>=2.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "django-debug-toolbar>=4.4",
+    "pytest>=8.3",
+    "pytest-django>=4.8",
+    "pytest-cov>=5.0",
+    "flake8>=7.1",
+    "black>=24.8",
+    "isort>=5.13",
+    "mypy>=1.11",
+    "django-stubs>=5.0",
+    "pre-commit>=3.8",
+]
+
+[dependency-groups]
+dev = [
+    "django-debug-toolbar>=4.4",
+    "pytest>=8.3",
+    "pytest-django>=4.8",
+    "pytest-cov>=5.0",
+    "flake8>=7.1",
+    "black>=24.8",
+    "isort>=5.13",
+    "mypy>=1.11",
+    "django-stubs>=5.0",
+    "pre-commit>=3.8",
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py313']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+    | \.venv
+    | migrations
+    | __pycache__
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 88
+skip = [".venv", "migrations"]
+known_django = ["django", "rest_framework"]
+known_first_party = ["apps", "conf"]
+sections = ["FUTURE", "STDLIB", "DJANGO", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+
+[tool.mypy]
+python_version = "3.13"
+plugins = ["mypy_django_plugin.main"]
+ignore_missing_imports = true
+strict = false
+
+[tool.django-stubs]
+django_settings_module = "conf.settings"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "conf.settings"
+python_files = ["test_*.py", "*_test.py"]
+addopts = "-v --tb=short"
+
+[tool.hatch.build.targets.wheel]
+packages = ["apps", "conf"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
