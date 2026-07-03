@@ -17,3 +17,10 @@ def test_base_model_is_abstract() -> None:
     from apps.common.models import BaseModel
 
     assert BaseModel._meta.abstract is True
+
+
+def test_ping_task_runs_eagerly() -> None:
+    from apps.common.tasks import ping
+
+    result = ping.delay()
+    assert result.get(timeout=5) == "pong"
