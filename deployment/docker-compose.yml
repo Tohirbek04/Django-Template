@@ -1,14 +1,190 @@
 services:
-  # PostgreSQL Database Service
+  # Reverse proxy — TLS, routing, zero-downtime pool membership
+  traefik:
+    image: traefik:v3.7
+    restart: unless-stopped
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--certificatesresolvers.le.acme.email=${LETSENCRYPT_EMAIL}"
+      - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.le.acme.tlschallenge=true"
+      - "--entrypoints.metrics.address=:8082"
+      - "--metrics.prometheus=true"
+      - "--metrics.prometheus.entrypoint=metrics"
+      - "--api.dashboard=true"
+      - "--ping=true"
+      - "--log.level=INFO"
+      - "--accesslog=true"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_letsencrypt:/letsencrypt
+    networks:
+      - backend-network
+      - monitoring
+    labels:
+      - "traefik.enable=true"
+      # Dashboard at https://<domain>/traefik (basic auth)
+      - "traefik.http.routers.dashboard.rule=Host(`${DOMAIN}`) && (PathPrefix(`/traefik`) || PathPrefix(`/api`))"
+      - "traefik.http.routers.dashboard.entrypoints=websecure"
+      - "traefik.http.routers.dashboard.tls.certresolver=le"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.middlewares=dashboard-auth,dashboard-strip"
+      - "traefik.http.middlewares.dashboard-auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH}"
+      - "traefik.http.middlewares.dashboard-strip.stripprefix.prefixes=/traefik"
+      # www -> apex redirect (attached to routers below)
+      - "traefik.http.middlewares.www-redirect.redirectregex.regex=^https://www\\.(.+)"
+      - "traefik.http.middlewares.www-redirect.redirectregex.replacement=https://$${1}"
+      - "traefik.http.middlewares.www-redirect.redirectregex.permanent=true"
+      # Shared security headers
+      - "traefik.http.middlewares.security-headers.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.security-headers.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.security-headers.headers.stsPreload=true"
+      - "traefik.http.middlewares.security-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.security-headers.headers.referrerPolicy=strict-origin-when-cross-origin"
+      - "traefik.http.middlewares.security-headers.headers.customFrameOptionsValue=SAMEORIGIN"
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+  # Django application
+  backend:
+    image: ${DOCKER_IMAGE}
+    restart: unless-stopped
+    volumes:
+      - media_volume:/app/media
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment: &backend-env
+      DJANGO_SETTINGS_MODULE: conf.settings.prod
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DATABASE_URL: postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@pgbouncer:6432/${DATABASE_NAME}
+      CACHE_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      DOMAIN: ${DOMAIN}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    networks:
+      - backend-network
+      - monitoring
+    expose:
+      - "8001"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.backend.rule=Host(`${DOMAIN}`) || Host(`www.${DOMAIN}`)"
+      - "traefik.http.routers.backend.entrypoints=websecure"
+      - "traefik.http.routers.backend.tls.certresolver=le"
+      - "traefik.http.routers.backend.middlewares=www-redirect,security-headers"
+      - "traefik.http.services.backend.loadbalancer.server.port=8001"
+      - "traefik.http.services.backend.loadbalancer.healthcheck.path=/healthz/"
+      - "traefik.http.services.backend.loadbalancer.healthcheck.interval=15s"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8001/healthz/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+
+  # Media file server (Traefik cannot serve files)
+  media:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    volumes:
+      - ./server/media.Caddyfile:/etc/caddy/Caddyfile:ro
+      - media_volume:/srv/media:ro
+    networks:
+      - backend-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.media.rule=(Host(`${DOMAIN}`) || Host(`www.${DOMAIN}`)) && PathPrefix(`/media`)"
+      - "traefik.http.routers.media.entrypoints=websecure"
+      - "traefik.http.routers.media.tls.certresolver=le"
+      - "traefik.http.routers.media.middlewares=www-redirect,security-headers"
+      - "traefik.http.services.media.loadbalancer.server.port=8080"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+
+  # Celery worker
+  celery-worker:
+    image: ${DOCKER_IMAGE}
+    restart: unless-stopped
+    command: celery -A conf worker -l info --concurrency=2
+    volumes:
+      - media_volume:/app/media
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment: *backend-env
+    networks:
+      - backend-network
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A conf inspect ping -d celery@$$HOSTNAME --timeout 10 || exit 1"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  # Celery beat (periodic task scheduler, DB-backed)
+  celery-beat:
+    image: ${DOCKER_IMAGE}
+    restart: unless-stopped
+    command: celery -A conf beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment: *backend-env
+    networks:
+      - backend-network
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+
+  # PostgreSQL
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DATABASE_USER}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
       POSTGRES_DB: ${DATABASE_NAME}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     networks:
       - backend-network
     healthcheck:
@@ -22,9 +198,9 @@ services:
           cpus: "1.0"
           memory: 2G
 
-  # PgBouncer for Database Connection Pooling
+  # PgBouncer connection pooler
   pgbouncer:
-    image: edoburu/pgbouncer:v1.23.1-p3
+    image: edoburu/pgbouncer:v1.25.2-p0
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@db:5432/${DATABASE_NAME}
@@ -32,6 +208,7 @@ services:
       PGBOUNCER_MAX_CLIENT_CONN: 1000
       PGBOUNCER_DEFAULT_POOL_SIZE: 20
       PGBOUNCER_POOL_MODE: transaction
+      PGBOUNCER_AUTH_TYPE: scram-sha-256
     networks:
       - backend-network
     depends_on:
@@ -44,22 +221,9 @@ services:
       retries: 5
       start_period: 10s
 
-  # PostgreSQL Exporter for Prometheus
-  postgres-exporter:
-    image: prometheuscommunity/postgres-exporter:latest
-    restart: unless-stopped
-    environment:
-      DATA_SOURCE_NAME: "postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@db:5432/${DATABASE_NAME}?sslmode=disable"
-    networks:
-      - backend-network
-      - monitoring
-    depends_on:
-      db:
-        condition: service_healthy
-
-  # Redis Cache Service
+  # Redis
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     restart: unless-stopped
     command:
       - redis-server
@@ -86,105 +250,9 @@ services:
           cpus: "0.5"
           memory: 512M
 
-  # Redis Exporter for Prometheus
-  redis-exporter:
-    image: oliver006/redis_exporter:latest
-    restart: unless-stopped
-    command:
-      - "--redis.addr=redis:6379"
-      - "--redis.password=${REDIS_PASSWORD}"
-    networks:
-      - backend-network
-      - monitoring
-    depends_on:
-      redis:
-        condition: service_healthy
-
-  # Django Backend Application Service
-  backend:
-    image: ${DOCKER_IMAGE}
-    restart: unless-stopped
-    volumes:
-      - static_volume:/app/static
-      - media_volume:/app/media
-      - logs_volume:/app/logs
-    depends_on:
-      pgbouncer:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
-      DJANGO_DEBUG: "False"
-      DATABASE_USER: ${DATABASE_USER}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
-      DATABASE_NAME: ${DATABASE_NAME}
-      DATABASE_HOST: pgbouncer
-      DATABASE_PORT: 6432
-      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      CACHE_BACKEND_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      DOMAIN: ${DOMAIN}
-    networks:
-      - backend-network
-      - monitoring
-    expose:
-      - "8001"
-    healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8001/healthz/ || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    deploy:
-      replicas: 2
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 1G
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-        max_attempts: 3
-
-  # Caddy Reverse Proxy
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      DOMAIN: ${DOMAIN}
-      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL}
-    volumes:
-      - ./server/Caddyfile:/etc/caddy/Caddyfile:ro
-      - static_volume:/srv/static:ro
-      - media_volume:/srv/media:ro
-      - caddy_data:/data
-      - caddy_config:/config
-      - caddy_logs:/var/log/caddy
-    networks:
-      - frontend-network
-      - backend-network
-      - monitoring
-    depends_on:
-      backend:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:2019/metrics"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 256M
-
-  # Database Backup Service
+  # Daily database backups
   db_backup:
-    image: prodrigestivill/postgres-backup-local:16
+    image: prodrigestivill/postgres-backup-local:18
     restart: unless-stopped
     environment:
       POSTGRES_HOST: db
@@ -208,52 +276,74 @@ services:
       interval: 60s
       timeout: 10s
       retries: 3
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 256M
 
-  # Prometheus Monitoring Service
+  # Prometheus exporters
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.18.1
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@db:5432/${DATABASE_NAME}?sslmode=disable"
+    networks:
+      - backend-network
+      - monitoring
+    depends_on:
+      db:
+        condition: service_healthy
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.69.0
+    restart: unless-stopped
+    command:
+      - "--redis.addr=redis:6379"
+      - "--redis.password=${REDIS_PASSWORD}"
+    networks:
+      - backend-network
+      - monitoring
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # Prometheus (internal only — reach via Grafana)
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.13.0
     restart: unless-stopped
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=15d"
-      - "--web.enable-lifecycle"
     volumes:
       - ../prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
-    ports:
-      - "9091:9090"
     networks:
       - monitoring
-    depends_on:
-      - backend
-      - postgres-exporter
-      - redis-exporter
     deploy:
       resources:
         limits:
           cpus: "0.5"
           memory: 512M
 
-  # Grafana Visualization Service
+  # Grafana at https://<domain>/grafana
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.0.3
     restart: unless-stopped
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_SERVER_ROOT_URL: https://${DOMAIN}/grafana
-    ports:
-      - "3000:3000"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
     networks:
       - monitoring
+      - backend-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`${DOMAIN}`) && PathPrefix(`/grafana`)"
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      - "traefik.http.routers.grafana.tls.certresolver=le"
+      - "traefik.http.routers.grafana.middlewares=security-headers"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
     depends_on:
       - prometheus
     deploy:
@@ -265,15 +355,11 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  static_volume:
   media_volume:
-  logs_volume:
   grafana_data:
-  caddy_data:
-  caddy_config:
-  caddy_logs:
-  backup_data:
   prometheus_data:
+  backup_data:
+  traefik_letsencrypt:
 
 networks:
   backend-network:

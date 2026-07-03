@@ -2,34 +2,24 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
-alerting:
-  alertmanagers: []
-
-rule_files: []
-
 scrape_configs:
-  # Prometheus self-monitoring
-  - job_name: "prometheus"
-    static_configs:
-      - targets: ["prometheus:9090"]
-
-  # PostgreSQL metrics via postgres-exporter
-  - job_name: "postgres"
-    static_configs:
-      - targets: ["postgres-exporter:9187"]
-
-  # Redis metrics via redis-exporter
-  - job_name: "redis"
-    static_configs:
-      - targets: ["redis-exporter:9121"]
-
-  # Django application metrics via django-prometheus
   - job_name: "django"
     metrics_path: /metrics
     static_configs:
       - targets: ["backend:8001"]
 
-  # Caddy metrics (admin API must be enabled)
-  - job_name: "caddy"
+  - job_name: "traefik"
     static_configs:
-      - targets: ["caddy:2019"]
+      - targets: ["traefik:8082"]
+
+  - job_name: "postgres"
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: "redis"
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
