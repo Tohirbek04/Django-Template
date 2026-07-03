@@ -2,85 +2,122 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [master, caddy]
+    branches: [master]
   pull_request:
-    branches: [master, caddy]
+    branches: [master]
 
 env:
-  PYTHON_VERSION: "3.13"
-  UV_VERSION: "0.5"
-  VERSION: "1.0.0"
-  DOCKER_REPO: ${{ secrets.DOCKER_USERNAME }}/template-backend
+  REGISTRY: ghcr.io
 
 jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+  test:
+    name: Test (pytest)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: django_template
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DJANGO_SETTINGS_MODULE: conf.settings.dev
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/django_template
+      CACHE_URL: redis://localhost:6379/1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run pytest --cov=apps --cov=conf --cov-report=term
 
   build:
-    name: Build & Push Docker Image
+    name: Build & Push (GHCR)
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
-
+    needs: [lint, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Extract metadata
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute image name
         id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.DOCKER_REPO }}
-          tags: |
-            type=raw,value=${{ env.VERSION }}
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
+        run: |
+          IMAGE="${REGISTRY}/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
         with:
           context: .
           file: ./deployment/Dockerfile
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            ${{ steps.meta.outputs.image }}:sha-${{ github.sha }}
+            ${{ steps.meta.outputs.image }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
 
   deploy:
-    name: Deploy to Production
+    name: Deploy (zero-downtime)
     runs-on: ubuntu-latest
     needs: build
-    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/caddy'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     environment: production
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Create production .env file
+      - name: Create production .env
         run: |
           cat > .env << EOF
+          DOCKER_IMAGE=${{ needs.build.outputs.image }}:sha-${{ github.sha }}
+          DOMAIN=${{ secrets.DOMAIN }}
+          LETSENCRYPT_EMAIL=${{ secrets.LETSENCRYPT_EMAIL }}
+          DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
           DATABASE_USER=${{ secrets.DATABASE_USER }}
           DATABASE_PASSWORD=${{ secrets.DATABASE_PASSWORD }}
           DATABASE_NAME=${{ secrets.DATABASE_NAME }}
-          DATABASE_PORT=6432
-          DATABASE_HOST=pgbouncer
-          DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
-          DJANGO_DEBUG=False
           REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
-          CELERY_BROKER_URL=redis://:${{ secrets.REDIS_PASSWORD }}@redis:6379/0
-          CACHE_BACKEND_URL=redis://:${{ secrets.REDIS_PASSWORD }}@redis:6379/1
-          DOMAIN=${{ secrets.DOMAIN }}
-          LETSENCRYPT_EMAIL=${{ secrets.LETSENCRYPT_EMAIL }}
-          DOCKER_USERNAME=${{ secrets.DOCKER_USERNAME }}
-          DOCKER_IMAGE=${{ env.DOCKER_REPO }}:${{ env.VERSION }}
+          SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+          GRAFANA_PASSWORD=${{ secrets.GRAFANA_PASSWORD }}
+          TRAEFIK_DASHBOARD_AUTH=${{ secrets.TRAEFIK_DASHBOARD_AUTH }}
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
           EOF
@@ -95,63 +132,69 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Create deployment directory
-        run: |
-          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "mkdir -p /var/www/app/deployment/server"
-
       - name: Upload deployment files
         run: |
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "mkdir -p /var/www/app/deployment/server /var/www/app/deployment/grafana /var/www/app/prometheus"
           scp .env ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/app/deployment/
           scp deployment/docker-compose.yml ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/app/deployment/
-          scp deployment/server/Caddyfile ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/app/deployment/server/
+          scp deployment/server/media.Caddyfile ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/app/deployment/server/
           scp deployment/send_backup.sh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/app/deployment/
-          scp -r prometheus ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/app/
+          scp -r deployment/grafana/provisioning ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/app/deployment/grafana/
+          scp prometheus/prometheus.yml ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/app/prometheus/
 
-      - name: Deploy with Docker Compose
+      - name: Login to GHCR on server
+        run: |
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            "echo '${{ secrets.GHCR_PULL_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
+
+      - name: Deploy with zero downtime
         run: |
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'DEPLOY'
-          set -e  # Exit immediately if any command fails
-
+          set -e
           cd /var/www/app/deployment
 
-          # Pull latest images (fails if any image is not found)
+          # Ensure docker-rollout plugin is installed
+          if ! docker rollout --help >/dev/null 2>&1; then
+            echo "Installing docker-rollout plugin..."
+            mkdir -p ~/.docker/cli-plugins
+            curl -fsSL https://raw.githubusercontent.com/wowu/docker-rollout/main/docker-rollout \
+              -o ~/.docker/cli-plugins/docker-rollout
+            chmod +x ~/.docker/cli-plugins/docker-rollout
+          fi
+
           echo "Pulling images..."
-          docker compose pull || { echo "Image pull failed!"; exit 1; }
+          docker compose pull
 
-          # Stop existing containers gracefully
-          echo "Stopping existing containers..."
-          docker compose down --remove-orphans
+          echo "Starting/upgrading infrastructure services..."
+          docker compose up -d --remove-orphans db pgbouncer redis
 
-          # Start new containers
-          echo "Starting new containers..."
-          docker compose up -d || { echo "Failed to start containers!"; exit 1; }
+          echo "Running migrations (one-off)..."
+          docker compose run --rm --no-deps backend python manage.py migrate --noinput
 
-          # Wait for health checks
-          echo "Waiting for services to be healthy..."
-          sleep 30
+          echo "Rolling out backend with zero downtime..."
+          docker rollout backend
 
-          # Verify deployment
-          docker compose ps
+          echo "Updating remaining services..."
+          docker compose up -d --remove-orphans
 
-          # Clean up old images
+          echo "Pruning old images..."
           docker image prune -f
 
-          echo "Deployment completed successfully!"
+          echo "Deployment completed."
           DEPLOY
 
       - name: Verify deployment
         run: |
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'VERIFY'
           cd /var/www/app/deployment
-
-          # Check if all services are running
-          if docker compose ps | grep -q "unhealthy\|Exit"; then
+          sleep 10
+          if docker compose ps | grep -qE "unhealthy|Exit"; then
             echo "Deployment verification failed!"
-            docker compose logs --tail=50
+            docker compose ps
+            docker compose logs --tail=50 backend
             exit 1
           fi
-
-          echo "✅ Deployment successful!"
+          echo "Deployment healthy."
           VERIFY
 
       - name: Notify on failure
@@ -159,4 +202,4 @@ jobs:
         run: |
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -d text="Deployment failed for ${{ github.repository }} on branch ${{ github.ref_name }}"
+            -d text="❌ Deployment failed: ${{ github.repository }}@${{ github.ref_name }} (${{ github.sha }})"
