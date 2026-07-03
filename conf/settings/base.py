@@ -39,6 +39,8 @@ INSTALLED_APPS = [
     "django_prometheus",
     "django_celery_beat",
     "import_export",
+    # First-party
+    "apps.common",
 ]
 
 MIDDLEWARE = [
