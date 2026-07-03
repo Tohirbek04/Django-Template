@@ -1,4 +1,4 @@
-.PHONY: install dev sync lock run migrate makemigrations shell test lint format clean docker-build docker-up docker-down docker-logs
+.PHONY: install dev sync lock run migrate makemigrations shell test lint format clean docker-build docker-up docker-down docker-logs dev-up dev-down worker beat
 
 # Package management with uv
 install:
@@ -46,11 +46,6 @@ collectstatic:
 check:
 	uv run python manage.py check
 
-# Remove migrations (use with caution)
-unmig:
-	find . -path "*/migrations/*.py" -not -name "__init__.py" -delete
-	find . -path "*/migrations/*.pyc" -delete
-
 # Testing
 test:
 	uv run pytest -v
@@ -60,11 +55,12 @@ test-cov:
 
 # Code quality
 lint:
-	uv run flake8 .
+	uv run ruff check .
+	uv run ruff format --check .
 
 format:
-	uv run black .
-	uv run isort .
+	uv run ruff format .
+	uv run ruff check --fix .
 
 typecheck:
 	uv run mypy .
@@ -122,6 +118,20 @@ clean:
 	find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name "htmlcov" -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name ".coverage" -delete 2>/dev/null || true
+
+# Local dev services
+dev-up:
+	docker compose -f docker-compose.dev.yml up -d --wait
+
+dev-down:
+	docker compose -f docker-compose.dev.yml down
+
+# Celery (local)
+worker:
+	uv run celery -A conf worker -l info
+
+beat:
+	uv run celery -A conf beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
 
 # Help
 help:
