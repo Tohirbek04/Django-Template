@@ -19,12 +19,7 @@ DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() in ["true", "1", "t"]
 # Domain configuration
 DOMAIN = os.getenv("DOMAIN")
 
-ALLOWED_HOSTS = [
-    DOMAIN,
-    f"www.{DOMAIN}",
-    "localhost",
-    "127.0.0.1"
-]
+ALLOWED_HOSTS = [DOMAIN, f"www.{DOMAIN}", "localhost", "127.0.0.1"]
 
 # CSRF configuration
 CSRF_TRUSTED_ORIGINS = [
@@ -112,7 +107,11 @@ DATABASES = {
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {
+        "NAME": (
+            "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"
+        )
+    },
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
