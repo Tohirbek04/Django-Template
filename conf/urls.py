@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib import admin
 from django.http import JsonResponse
 from django.urls import include, path
@@ -6,8 +7,6 @@ from drf_spectacular.views import (
     SpectacularRedocView,
     SpectacularSwaggerView,
 )
-
-from conf import settings
 
 
 def healthz(request):
