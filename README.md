@@ -99,7 +99,7 @@ The GitHub Actions workflow (`.github/workflows/deploy.yml`) runs these jobs on 
    - `docker compose up -d --remove-orphans`
    - Telegram notification on failure
 
-**Rollback:** re-run the deploy workflow with the desired image tag set in `DOCKER_IMAGE` (e.g., `ghcr.io/your-org/your-repo:sha-<older-sha>`).
+**Rollback:** either revert the offending commit and push to `master` (CI builds and deploys the reverted state), or SSH into the server, edit `DOCKER_IMAGE` in `/var/www/app/deployment/.env` to an older `sha-<commit>` tag, then run `docker compose pull && docker rollout backend` from that directory.
 
 ### Required GitHub Secrets
 
