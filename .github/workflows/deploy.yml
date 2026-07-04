@@ -52,6 +52,7 @@ jobs:
       DJANGO_SETTINGS_MODULE: conf.settings.dev
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/django_template
       CACHE_URL: redis://localhost:6379/1
+      DJANGO_SECRET_KEY: ci-only-secret-key-not-used-in-prod
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
