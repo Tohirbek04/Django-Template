@@ -31,14 +31,13 @@ services:
       - monitoring
     labels:
       - "traefik.enable=true"
-      # Dashboard at https://<domain>/traefik (basic auth)
-      - "traefik.http.routers.dashboard.rule=Host(`${DOMAIN}`) && (PathPrefix(`/traefik`) || PathPrefix(`/api`))"
+      # Dashboard at https://traefik.<domain> (basic auth, dedicated subdomain)
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.${DOMAIN}`)"
       - "traefik.http.routers.dashboard.entrypoints=websecure"
       - "traefik.http.routers.dashboard.tls.certresolver=le"
       - "traefik.http.routers.dashboard.service=api@internal"
-      - "traefik.http.routers.dashboard.middlewares=dashboard-auth,dashboard-strip"
+      - "traefik.http.routers.dashboard.middlewares=dashboard-auth"
       - "traefik.http.middlewares.dashboard-auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH}"
-      - "traefik.http.middlewares.dashboard-strip.stripprefix.prefixes=/traefik"
       # www -> apex redirect (attached to routers below)
       - "traefik.http.middlewares.www-redirect.redirectregex.regex=^https://www\\.(.+)"
       - "traefik.http.middlewares.www-redirect.redirectregex.replacement=https://$${1}"
@@ -94,6 +93,13 @@ services:
       - "traefik.http.services.backend.loadbalancer.server.port=8001"
       - "traefik.http.services.backend.loadbalancer.healthcheck.path=/healthz/"
       - "traefik.http.services.backend.loadbalancer.healthcheck.interval=15s"
+      # /metrics — deny external access (longer rule = higher priority than backend router)
+      - "traefik.http.routers.backend-metrics.rule=(Host(`${DOMAIN}`) || Host(`www.${DOMAIN}`)) && Path(`/metrics`)"
+      - "traefik.http.routers.backend-metrics.entrypoints=websecure"
+      - "traefik.http.routers.backend-metrics.tls.certresolver=le"
+      - "traefik.http.routers.backend-metrics.middlewares=metrics-internal-only"
+      - "traefik.http.routers.backend-metrics.service=backend"
+      - "traefik.http.middlewares.metrics-internal-only.ipallowlist.sourcerange=127.0.0.1/32"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8001/healthz/ || exit 1"]
       interval: 30s

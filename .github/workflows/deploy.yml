@@ -107,7 +107,7 @@ jobs:
 
       - name: Create production .env
         run: |
-          cat > .env << EOF
+          cat > .env << 'EOF'
           DOCKER_IMAGE=${{ needs.build.outputs.image }}:sha-${{ github.sha }}
           DOMAIN=${{ secrets.DOMAIN }}
           LETSENCRYPT_EMAIL=${{ secrets.LETSENCRYPT_EMAIL }}

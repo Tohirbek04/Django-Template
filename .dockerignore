@@ -11,3 +11,5 @@ logs
 .pytest_cache
 .ruff_cache
 docker-compose.dev.yml
+.superpowers
+.github

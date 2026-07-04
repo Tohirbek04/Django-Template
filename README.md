@@ -126,7 +126,7 @@ The GitHub Actions workflow (`.github/workflows/deploy.yml`) runs these jobs on 
 
 | Service | Description |
 |---------|-------------|
-| `traefik` | Traefik v3 reverse proxy — auto-HTTPS, dashboard at `/traefik` |
+| `traefik` | Traefik v3 reverse proxy — auto-HTTPS, dashboard at `https://traefik.<your-domain>` (requires DNS A record for `traefik.` subdomain) |
 | `backend` | Django application (2 replicas) |
 | `media` | Caddy file-server for `/media` uploads |
 | `celery-worker` | Celery task worker |
@@ -225,7 +225,11 @@ Recommended dashboard IDs to import:
 
 ### Traefik Dashboard
 
-The Traefik dashboard is available at `https://<domain>/traefik` protected by HTTP basic auth. Generate the `TRAEFIK_DASHBOARD_AUTH` value with:
+The Traefik dashboard is available at `https://traefik.<your-domain>` protected by HTTP basic auth.
+
+> **DNS requirement:** create an A record for `traefik.<your-domain>` pointing to the same server IP as your apex domain. Traefik will obtain a separate Let's Encrypt certificate for this subdomain automatically.
+
+Generate the `TRAEFIK_DASHBOARD_AUTH` value with:
 
 ```bash
 docker run --rm httpd:alpine htpasswd -nb admin <password>

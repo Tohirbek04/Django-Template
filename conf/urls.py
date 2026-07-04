@@ -14,8 +14,11 @@ urlpatterns = [
     path("healthz/", healthz, name="healthz"),
     # Prometheus metrics
     path("", include("django_prometheus.urls")),
-    # API routes
-    # path("api/v1/", include("apps.<your_app>.urls")),
+    # API routes — project convention: DefaultRouter(trailing_slash=False)
+    # from rest_framework.routers import DefaultRouter
+    # router = DefaultRouter(trailing_slash=False)
+    # router.register("things", ThingViewSet, basename="thing")
+    # urlpatterns += [path("api/v1/", include(router.urls))]
 ]
 
 if settings.DEBUG:

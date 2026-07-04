@@ -91,6 +91,9 @@ DATABASES["default"]["ENGINE"] = "django_prometheus.db.backends.postgresql"
 DATABASES["default"]["CONN_MAX_AGE"] = 60
 DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
 DATABASES["default"].setdefault("OPTIONS", {})["connect_timeout"] = 10
+DATABASES["default"]["DISABLE_SERVER_SIDE_CURSORS"] = (
+    True  # required behind PgBouncer transaction pooling
+)
 
 AUTH_PASSWORD_VALIDATORS = [
     {
