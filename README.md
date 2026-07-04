@@ -4,77 +4,46 @@ Production-ready Django REST API template with modern tooling.
 
 ## Tech Stack
 
-- **Python 3.13** - Latest Python version
-- **Django 5.1** - Web framework
-- **Django REST Framework** - API toolkit
-- **PostgreSQL 16** - Database
-- **Redis 7** - Cache & message broker
-- **Caddy 2** - Reverse proxy with automatic HTTPS
-- **uv** - Fast Python package manager
-- **Uvicorn** - ASGI server
-- **Docker** - Containerization
-- **Prometheus + Grafana** - Monitoring
+| Layer | Technology |
+|-------|------------|
+| Language | **Python 3.13** |
+| Framework | **Django 5.2 LTS** |
+| API toolkit | **Django REST Framework 3.17** |
+| Admin | **django-unfold** |
+| Database | **PostgreSQL 18** + **PgBouncer 1.25** (connection pooling) |
+| Cache / broker | **Redis 8** |
+| Task queue | **Celery 5.6** + beat (DB-backed scheduler) |
+| Reverse proxy / TLS | **Traefik v3** (auto-HTTPS via Let's Encrypt) |
+| Static files | **WhiteNoise** (served from the image) |
+| Observability | **Prometheus v3** + **Grafana 13** + **Sentry** |
+| Package manager | **uv** |
+| Linter / formatter | **ruff** |
+| Container runtime | **Docker** + **docker-rollout** (zero-downtime deploys) |
+| Image registry | **GHCR** (`sha-<commit>` tags) |
 
 ## Prerequisites
 
 - Python 3.13+
 - [uv](https://docs.astral.sh/uv/) package manager
-- Docker & Docker Compose (for production)
-- PostgreSQL 16 (for local development)
-- Redis 7 (for local development)
+- Docker & Docker Compose (for local services and production)
 
 ## Quick Start
 
-### 1. Clone the repository
-
-```bash
-git clone <repository-url>
-cd Django-Template
-```
-
-### 2. Install dependencies
-
-```bash
-# Install uv if not already installed
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Install project dependencies
-make install
-
-# Or with dev dependencies
-make dev
-```
-
-### 3. Configure environment
-
 ```bash
 cp example.env .env
-# Edit .env with your settings
+make dev-up      # postgres 18 + redis 8 in docker
+make install     # uv sync --frozen
+make migrate
+make run         # http://localhost:8000 (swagger at /)
+make test
+make lint
 ```
-
-### 4. Setup database
-
-```bash
-# Start PostgreSQL container (optional)
-make db-start
-
-# Run migrations
-make mig
-```
-
-### 5. Run development server
-
-```bash
-make run
-```
-
-The API will be available at `http://localhost:8000`
 
 ## Development Commands
 
 ```bash
 # Package management
-make install          # Install dependencies
+make install          # Install dependencies (uv sync --frozen)
 make dev              # Install with dev dependencies
 make add pkg=name     # Add a package
 make add-dev pkg=name # Add a dev package
@@ -82,25 +51,30 @@ make lock             # Update lock file
 
 # Django
 make run              # Run development server
+make migrate          # Run migrations
+make makemigrations   # Create migrations
 make mig              # Make and run migrations
 make shell            # Django shell
 make createsuperuser  # Create admin user
 make collectstatic    # Collect static files
 
 # Code quality
-make lint             # Run flake8
-make format           # Format with black & isort
+make lint             # Run ruff check + ruff format --check
+make format           # Format with ruff format + ruff check --fix
 make typecheck        # Run mypy
 make quality          # Run all quality checks
 
 # Testing
-make test             # Run tests
+make test             # Run tests (pytest)
 make test-cov         # Run tests with coverage
 
-# Database
-make db-start         # Start PostgreSQL container
-make db-shell         # Access PostgreSQL CLI
-make redis-start      # Start Redis container
+# Local dev services
+make dev-up           # Start postgres 18 + redis 8 via docker-compose.dev.yml
+make dev-down         # Stop local dev services
+
+# Celery (local)
+make worker           # Start Celery worker
+make beat             # Start Celery beat scheduler
 
 # Utilities
 make secret-key       # Generate Django secret key
@@ -110,79 +84,100 @@ make help             # Show all commands
 
 ## Production Deployment
 
-### Using Docker Compose
+### CI/CD Pipeline
 
-```bash
-# Build and start all services
-cd deployment
-docker compose up -d
+The GitHub Actions workflow (`.github/workflows/deploy.yml`) runs these jobs on every push to `master`:
 
-# View logs
-docker compose logs -f
+1. **Lint** — `ruff check` + `ruff format --check`
+2. **Test** — `pytest` against PostgreSQL 18 + Redis 8 service containers
+3. **Build & Push** — Docker image built and pushed to GHCR with tags `sha-<commit>` and `latest` (runs only on push to `master`, requires lint + test to pass)
+4. **Deploy** — SSH into the production server, then:
+   - `docker compose pull`
+   - Bring up `db`, `pgbouncer`, `redis`
+   - One-off migration: `docker compose run --rm --no-deps backend python manage.py migrate --noinput`
+   - Zero-downtime backend rollout: `docker rollout backend`
+   - `docker compose up -d --remove-orphans`
+   - Telegram notification on failure
 
-# Stop services
-docker compose down
-```
+**Rollback:** re-run the deploy workflow with the desired image tag set in `DOCKER_IMAGE` (e.g., `ghcr.io/your-org/your-repo:sha-<older-sha>`).
 
-### Services
+### Required GitHub Secrets
 
-| Service | Port | Description |
-|---------|------|-------------|
-| backend | 8001 | Django application (2 replicas) |
-| caddy | 80, 443 | Reverse proxy with auto HTTPS |
-| db | 5432 | PostgreSQL 16 |
-| pgbouncer | 6432 | Connection pooling |
-| redis | 6379 | Cache & broker |
-| postgres-exporter | - | PostgreSQL metrics exporter |
-| redis-exporter | - | Redis metrics exporter |
-| db_backup | - | Automated daily backups |
-| prometheus | 9091 | Metrics collection |
-| grafana | 3000 | Dashboards |
+| Secret | Description |
+|--------|-------------|
+| `SSH_PRIVATE_KEY` | Private key for SSH access to the production server |
+| `SSH_HOST` | Production server hostname or IP |
+| `SSH_USER` | SSH login user |
+| `DJANGO_SECRET_KEY` | Django `SECRET_KEY` |
+| `DATABASE_USER` | PostgreSQL username |
+| `DATABASE_PASSWORD` | PostgreSQL password |
+| `DATABASE_NAME` | PostgreSQL database name |
+| `REDIS_PASSWORD` | Redis `requirepass` password |
+| `DOMAIN` | Production domain (e.g. `example.com`) |
+| `LETSENCRYPT_EMAIL` | Email for Let's Encrypt TLS certificates |
+| `GRAFANA_PASSWORD` | Grafana admin password |
+| `TRAEFIK_DASHBOARD_AUTH` | htpasswd string for Traefik dashboard basic auth |
+| `GHCR_PULL_TOKEN` | GitHub PAT used by the server to pull from GHCR |
+| `SENTRY_DSN` | Sentry DSN (optional — leave empty to disable) |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token for failure notifications |
+| `TELEGRAM_CHAT_ID` | Telegram chat ID for failure notifications |
 
-### Environment Variables
+### Docker Compose Services
 
-```bash
-# Required
-DATABASE_USER=
-DATABASE_PASSWORD=
-DATABASE_NAME=
-DJANGO_SECRET_KEY=
-REDIS_PASSWORD=
-DOMAIN=
-LETSENCRYPT_EMAIL=
-DOCKER_USERNAME=
-DOCKER_PASSWORD=
+| Service | Description |
+|---------|-------------|
+| `traefik` | Traefik v3 reverse proxy — auto-HTTPS, dashboard at `/traefik` |
+| `backend` | Django application (2 replicas) |
+| `media` | Caddy file-server for `/media` uploads |
+| `celery-worker` | Celery task worker |
+| `celery-beat` | Celery periodic task scheduler (DB-backed) |
+| `db` | PostgreSQL 18 |
+| `pgbouncer` | PgBouncer 1.25 connection pooler |
+| `redis` | Redis 8 |
+| `db_backup` | Automated daily backups (7-day retention) |
+| `postgres-exporter` | PostgreSQL metrics exporter |
+| `redis-exporter` | Redis metrics exporter |
+| `prometheus` | Prometheus v3 (internal, scrapes all exporters) |
+| `grafana` | Grafana 13 — dashboards at `/grafana` |
 
-# Optional
-DJANGO_DEBUG=False
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_CHAT_ID=
-GRAFANA_PASSWORD=
-```
+> **PostgreSQL 16 → 18 upgrade warning**
+>
+> PostgreSQL does NOT auto-upgrade volume data between major versions. If you are migrating an existing server from PostgreSQL 16, you must:
+> 1. `pg_dumpall` while still on PostgreSQL 16.
+> 2. Stop all services and wipe the `postgres_data` Docker volume.
+> 3. Start PostgreSQL 18 and restore the dump.
+>
+> Automated daily backups are stored in the `backup_data` volume — restore from there if needed.
 
 ## Project Structure
 
 ```
 Django-Template/
 ├── apps/                   # Django applications
+│   ├── common/             # BaseModel (UUID pk, timestamps), healthz endpoint
+│   └── users/              # Custom User model (UUID pk), unfold admin
 ├── conf/                   # Project configuration
-│   ├── settings.py         # Django settings
+│   ├── settings/
+│   │   ├── base.py         # Shared settings
+│   │   ├── dev.py          # Development overrides
+│   │   └── prod.py         # Production overrides
+│   ├── celery.py           # Celery application
 │   ├── urls.py             # URL routing
 │   ├── asgi.py             # ASGI config
 │   └── wsgi.py             # WSGI config
 ├── deployment/             # Production deployment
-│   ├── Dockerfile          # Docker image
+│   ├── Dockerfile          # Docker image (build-time collectstatic)
 │   ├── docker-compose.yml  # Container orchestration
 │   ├── send_backup.sh      # Backup notification script
+│   ├── grafana/            # Grafana provisioning
 │   └── server/
-│       └── Caddyfile       # Caddy configuration
+│       └── media.Caddyfile # Caddy media file-server config
 ├── prometheus/             # Monitoring config
 │   └── prometheus.yml
-├── templates/              # Django templates
-├── pyproject.toml          # Project dependencies
+├── docker-compose.dev.yml  # Local dev services (postgres 18 + redis 8)
+├── pyproject.toml          # Project dependencies (uv)
 ├── uv.lock                 # Lock file
 ├── Makefile                # Development commands
-├── entrypoint.sh           # Docker entrypoint
 └── manage.py               # Django CLI
 ```
 
@@ -190,9 +185,9 @@ Django-Template/
 
 When `DEBUG=True`, API documentation is available at:
 
-- **Swagger UI**: `http://localhost:8001/`
-- **ReDoc**: `http://localhost:8001/api/schema/redoc/`
-- **OpenAPI Schema**: `http://localhost:8001/api/schema/`
+- **Swagger UI**: `http://localhost:8000/`
+- **ReDoc**: `http://localhost:8000/api/schema/redoc/`
+- **OpenAPI Schema**: `http://localhost:8000/api/schema/`
 
 ## Health Check
 
@@ -215,42 +210,40 @@ Response:
 
 ## Monitoring
 
-### Prometheus Metrics
+### Grafana
 
-Django metrics are exposed at `/metrics` endpoint.
+Grafana is available at `https://<domain>/grafana` (admin password set via `GRAFANA_PASSWORD`).
 
-Prometheus is available at `http://localhost:9091`
+Recommended dashboard IDs to import:
 
-### Grafana Dashboards
+| Dashboard | ID |
+|-----------|----|
+| PostgreSQL | `9628` |
+| Redis | `763` |
+| Traefik | `17346` |
+| Django | `17658` |
 
-Grafana is available at `http://localhost:3000`
+### Traefik Dashboard
 
-Default credentials: `admin` / `admin` (or `GRAFANA_PASSWORD`)
+The Traefik dashboard is available at `https://<domain>/traefik` protected by HTTP basic auth. Generate the `TRAEFIK_DASHBOARD_AUTH` value with:
 
-## CI/CD
+```bash
+docker run --rm httpd:alpine htpasswd -nb admin <password>
+```
 
-GitHub Actions workflow includes:
+### Prometheus
 
-1. **Build** - Docker image build and push to Docker Hub
-2. **Deploy** - SSH deployment to production server with health verification
-
-Required GitHub Secrets:
-- `DOCKER_USERNAME`, `DOCKER_PASSWORD`
-- `SSH_PRIVATE_KEY`, `SSH_HOST`, `SSH_USER`
-- `DATABASE_USER`, `DATABASE_PASSWORD`, `DATABASE_NAME`
-- `DJANGO_SECRET_KEY`, `REDIS_PASSWORD`
-- `DOMAIN`, `LETSENCRYPT_EMAIL`
-- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (optional)
+Prometheus scrapes Django metrics from the `/metrics` endpoint, as well as postgres-exporter and redis-exporter. It is internal-only — access metrics through Grafana.
 
 ## Security Features
 
-- HTTPS with automatic certificate renewal (Caddy)
+- HTTPS with automatic certificate renewal (Traefik + Let's Encrypt)
 - CSRF protection
 - CORS configuration
-- Rate limiting
-- Security headers (HSTS, XSS, etc.)
+- Security headers (HSTS, XSS, content-type nosniff, etc.)
 - Non-root Docker user
 - Connection pooling (PgBouncer)
+- Traefik dashboard protected by HTTP basic auth
 
 ## License
 
